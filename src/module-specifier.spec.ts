@@ -1,14 +1,12 @@
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
+import type { SpecifierContext } from "./module-specifier.js";
 import { resolveModuleSpecifier } from "./module-specifier.js";
 import { getMockChecker, transformCode } from "./test-helpers/transform.js";
 
-function makeContext(sourceFile: ts.SourceFile): {
-	checker: ts.TypeChecker;
-	sourceFile: ts.SourceFile;
-} {
-	return { checker: getMockChecker(), sourceFile };
+function makeContext(sourceFile: ts.SourceFile): SpecifierContext {
+	return { checker: getMockChecker(), exempt: new Set(), sourceFile };
 }
 
 describe("runtime module specifiers", () => {
@@ -103,9 +101,13 @@ const actual = jest.requireActual(path);
 			},
 		} as unknown as ts.TypeChecker;
 
-		expect(() =>
-			resolveModuleSpecifier(call as ts.CallExpression, { checker, sourceFile: source }),
-		).toThrowError(/`jest\.doMock\(\)` requires/);
+		expect(() => {
+			return resolveModuleSpecifier(call as ts.CallExpression, {
+				checker,
+				exempt: new Set(),
+				sourceFile: source,
+			});
+		}).toThrowError(/`jest\.doMock\(\)` requires/);
 	});
 
 	it("should fall back to jest.mock() in the diagnostic for a bare callee", () => {
@@ -123,9 +125,13 @@ const actual = jest.requireActual(path);
 			},
 		} as unknown as ts.TypeChecker;
 
-		expect(() =>
-			resolveModuleSpecifier(call as ts.CallExpression, { checker, sourceFile: source }),
-		).toThrowError(/`jest\.mock\(\)` requires/);
+		expect(() => {
+			return resolveModuleSpecifier(call as ts.CallExpression, {
+				checker,
+				exempt: new Set(),
+				sourceFile: source,
+			});
+		}).toThrowError(/`jest\.mock\(\)` requires/);
 	});
 
 	it("should not consult the checker for a synthesized argument", () => {
@@ -146,7 +152,9 @@ const actual = jest.requireActual(path);
 			},
 		} as unknown as ts.TypeChecker;
 
-		expect(resolveModuleSpecifier(call, { checker, sourceFile: source })).toBeUndefined();
+		expect(
+			resolveModuleSpecifier(call, { checker, exempt: new Set(), sourceFile: source }),
+		).toBeUndefined();
 	});
 
 	it("should return undefined for a call with no arguments", () => {

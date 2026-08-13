@@ -3,14 +3,10 @@ import ts from "typescript";
 import { HOIST_METHODS } from "./constants.js";
 import type { SpecifierContext } from "./module-specifier.js";
 import { resolveModuleSpecifier } from "./module-specifier.js";
-import { resolveRelativeModulePath } from "./resolve-module-path.js";
-import type { PackageResolver } from "./resolve-package-path.js";
-import { resolvePackagePath } from "./resolve-package-path.js";
+import type { SpecifierResolutionContext } from "./resolve-specifier.js";
+import { resolveSpecifierExpression } from "./resolve-specifier.js";
 
-export interface MockArgumentContext extends SpecifierContext {
-	readonly factory: ts.NodeFactory;
-	readonly resolver: PackageResolver | undefined;
-}
+export interface MockArgumentContext extends SpecifierContext, SpecifierResolutionContext {}
 
 export function transformFirstArgument(
 	node: ts.CallExpression,
@@ -21,13 +17,7 @@ export function transformFirstArgument(
 		return node.arguments;
 	}
 
-	const { factory, resolver, sourceFile } = context;
-	const resolved =
-		resolveRelativeModulePath(factory, specifier) ??
-		(resolver !== undefined
-			? resolvePackagePath(factory, specifier, sourceFile.fileName, resolver)
-			: undefined);
-
+	const resolved = resolveSpecifierExpression(specifier, context);
 	if (resolved === undefined) {
 		return node.arguments;
 	}

@@ -108,19 +108,41 @@ const MODULE_PATH = "./my-service";
 jest.mock(MODULE_PATH); // → jest.mock(script.Parent["my-service"])
 ```
 
-A specifier that only has a value at runtime cannot be rewritten, and the
-transformer reports a compile error instead of letting a raw string reach jest:
+An array of specifiers works too. Iterate a `const` array of literals with
+`for...of` or `forEach`, and the transformer rewrites the array it reads:
 
 ```ts
 const RESET_MODULE_EXCEPTIONS = ["@rbxts/react"];
 for (const moduleName of RESET_MODULE_EXCEPTIONS) {
-	// [rbxts-jest-transformer] setup.ts:4 — `jest.doMock()` requires a module
-	// specifier that can be resolved at compile time.
 	jest.doMock(moduleName, () => jest.requireActual(moduleName));
 }
+
+// the loop reads an array of instance paths:
+// for (const moduleName of [<instance path for @rbxts/react>]) { ... }
 ```
 
-Write the calls out with literal specifiers, or pass a `ModuleScript` — an
+Only the expression the loop reads is rewritten. The declaration keeps its
+strings, so every other use of the array is unchanged. Three rules apply:
+
+- The array must be a `const` in the same file, or written inline, and hold only
+  string literals.
+- Every element must resolve. One element that does not is an error, because a
+  part-resolved array is worse than none.
+- The loop variable must only be used as a module specifier. Read it for
+  anything else — `print(moduleName)` — and the array keeps its strings, which
+  makes the jest call the compile error below.
+
+A specifier that still has no compile-time value is a compile error, not a raw
+string passed on to jest:
+
+```ts
+const modulePath = getModulePath();
+// [rbxts-jest-transformer] setup.ts:4 — `jest.doMock()` requires a module
+// specifier that can be resolved at compile time.
+jest.doMock(modulePath, () => ({}));
+```
+
+Write the call out with a literal specifier, or pass a `ModuleScript` — an
 argument that is not a string is left untouched.
 
 ## Per-test Mocking (`doMock` / `dontMock`)

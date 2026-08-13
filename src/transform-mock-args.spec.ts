@@ -7,7 +7,13 @@ import type { MockArgumentContext } from "./transform-mock-args.js";
 import { transformMockArguments } from "./transform-mock-args.js";
 
 function makeContext(sourceFile: ts.SourceFile, resolver?: PackageResolver): MockArgumentContext {
-	return { checker: getMockChecker(), factory: ts.factory, resolver, sourceFile };
+	return {
+		checker: getMockChecker(),
+		exempt: new Set(),
+		factory: ts.factory,
+		resolver,
+		sourceFile,
+	};
 }
 
 describe(transformMockArguments, () => {

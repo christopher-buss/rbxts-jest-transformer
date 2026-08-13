@@ -80,7 +80,8 @@ See `PRD.md` for full spec. Key REQs: REQ-001 (basic hoisting), REQ-002
 (jest-globals first), REQ-003 (import tracking), REQ-004 (shadowing), REQ-005
 (factory validation), REQ-006 (mock-prefix vars), REQ-007 (block scope), REQ-008
 (chained calls), REQ-009 (pure constant hoisting), REQ-010 (type-checker global
-resolution), REQ-014 (static module-specifier check).
+resolution), REQ-014 (static module-specifier check), REQ-015 (specifier array
+resolution).
 
 ## Core Philosophy
 

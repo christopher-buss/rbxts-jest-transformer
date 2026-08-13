@@ -25,7 +25,10 @@ const STRING_TYPE = fakeType(ts.TypeFlags.String);
 const STRING_ARRAY_TYPE = fakeType(ts.TypeFlags.Object);
 const UNKNOWN_TYPE = fakeType(ts.TypeFlags.Unknown);
 
+const declarationSymbols = new Map<ts.Declaration, ts.Symbol>();
+
 const mockChecker = {
+	getSymbolAtLocation: symbolAtLocation,
 	getTypeAtLocation: typeAtLocation,
 	resolveName: (name: string) => (MOCK_GLOBALS.has(name) ? MOCK_SYMBOL : undefined),
 } as unknown as ts.TypeChecker;
@@ -78,6 +81,26 @@ function findVariableDeclaration(node: ts.Node, name: string): ts.VariableDeclar
 	}
 
 	return ts.forEachChild(node, (child) => findVariableDeclaration(child, name));
+}
+
+function symbolAtLocation(node: ts.Node): ts.Symbol | undefined {
+	if (!ts.isIdentifier(node)) {
+		return undefined;
+	}
+
+	const declaration = findVariableDeclaration(node.getSourceFile(), node.text);
+	if (declaration === undefined) {
+		return undefined;
+	}
+
+	const existing = declarationSymbols.get(declaration);
+	if (existing !== undefined) {
+		return existing;
+	}
+
+	const symbol = { valueDeclaration: declaration } as unknown as ts.Symbol;
+	declarationSymbols.set(declaration, symbol);
+	return symbol;
 }
 
 function typeAtLocation(node: ts.Node): ts.Type {

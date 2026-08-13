@@ -110,6 +110,13 @@ through the full roblox-ts VirtualProject pipeline (TS → Lua).
     specifier that is a string only at runtime (loop variable, `let` binding,
     array element) throws a compile error naming the call, the file, and the
     line. A non-string specifier (a `ModuleScript`) is left untouched.
+15. **[REQ-015]** ✅: Specifier array resolution — an array of string literals
+    iterated into jest calls with `for...of` or `forEach` has its elements
+    resolved to instance paths, so the loop form of `doMock` compiles as
+    written. The iterable expression is rewritten, never the declaration, so
+    other uses of the array keep their strings. Needs a `const` array of
+    literals in the same file, every element resolvable, and an element binding
+    used only as a module specifier.
 
 ---
 

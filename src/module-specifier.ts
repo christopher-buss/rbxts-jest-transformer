@@ -2,6 +2,8 @@ import ts from "typescript";
 
 export interface SpecifierContext {
 	readonly checker: ts.TypeChecker;
+	/** Arguments an array rewrite has already made safe. */
+	readonly exempt: ReadonlySet<ts.Node>;
 	readonly sourceFile: ts.SourceFile;
 }
 
@@ -31,6 +33,12 @@ export function resolveModuleSpecifier(
 
 	if (ts.isStringLiteral(argument)) {
 		return argument.text;
+	}
+
+	// The array this argument reads is rewritten to instance paths, so the
+	// string it holds at runtime is already resolved.
+	if (context.exempt.has(argument)) {
+		return undefined;
 	}
 
 	// Nodes made by an earlier transformer have no source position, so the
@@ -78,7 +86,8 @@ function throwSpecifierError(
 		`[rbxts-jest-transformer] ${location} — \`${describeCall(node)}\` requires a module specifier that can be resolved at compile time.\n` +
 			`Cannot resolve: ${argument.getText(sourceFile)}\n` +
 			"Note: the specifier must be a string literal, or a `const` bound to one, so it can be rewritten to a Roblox instance path. " +
-			"A specifier that only exists at runtime — a loop variable, a `let` binding, an array element — reaches jest at runtime as a plain string and fails with `could not resolve an Instance named ...`.\n" +
-			"Pass a `ModuleScript` instead if the module is not known until runtime.",
+			"A `for...of` loop or a `forEach` call over a `const` array of literals also works, as long as the element is only ever used as a module specifier.\n" +
+			"A specifier that only exists at runtime reaches jest as a plain string and fails with `could not resolve an Instance named ...`. " +
+			"Pass a `ModuleScript` instead if the module is not known until compile time.",
 	);
 }

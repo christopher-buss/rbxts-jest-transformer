@@ -1,7 +1,7 @@
 import ts from "typescript";
 
 import { isJestModuleImport } from "./collect-jest-names.js";
-import { HOIST_METHODS, JEST_GLOBAL_NAME } from "./constants.js";
+import { CHAINABLE_MODULE_PATH_METHODS, HOIST_METHODS, JEST_GLOBAL_NAME } from "./constants.js";
 import type { IdentifierPredicate, JestNames } from "./constants.js";
 import {
 	collectHoistedIdentifiers,
@@ -58,6 +58,20 @@ export function isJestCallee(node: ts.Expression, names: JestNames): boolean {
 	}
 
 	return false;
+}
+
+export function isModulePathCallee(node: ts.Expression, names: JestNames): boolean {
+	if (isJestCallee(node, names)) {
+		return true;
+	}
+
+	// Chained imperative calls: jest.doMock("./a", fa).doMock("./b", fb)
+	return (
+		ts.isCallExpression(node) &&
+		ts.isPropertyAccessExpression(node.expression) &&
+		CHAINABLE_MODULE_PATH_METHODS.has(node.expression.name.text) &&
+		isModulePathCallee(node.expression.expression, names)
+	);
 }
 
 export function partitionBlock(

@@ -2,20 +2,18 @@ import ts from "typescript";
 
 import { collectJestNames } from "./collect-jest-names.js";
 import type { IdentifierPredicate, JestNames } from "./constants.js";
-import {
-	ALLOWED_IDENTIFIERS,
-	CHAINABLE_MODULE_PATH_METHODS,
-	MODULE_PATH_METHODS,
-} from "./constants.js";
-import { isJestCallee, partitionBlock, partitionStatements } from "./partition.js";
+import { ALLOWED_IDENTIFIERS, MODULE_PATH_METHODS } from "./constants.js";
+import { isModulePathCallee, partitionBlock, partitionStatements } from "./partition.js";
 import type { PackageResolver } from "./resolve-package-path.js";
 import { createPackageResolver } from "./resolve-package-path.js";
 import { collectShadowedNames, filterShadowed } from "./shadowing.js";
+import { collectSpecifierArrays } from "./specifier-arrays.js";
 import type { MockArgumentContext } from "./transform-mock-args.js";
 import { transformFirstArgument, transformMockArguments } from "./transform-mock-args.js";
 
 interface TransformContext extends MockArgumentContext, TransformerOptions {
 	readonly names: JestNames;
+	readonly replacements: ReadonlyMap<ts.Node, ts.Expression>;
 }
 
 interface TransformerOptions {
@@ -55,11 +53,21 @@ function buildContext(
 ): TransformContext {
 	const names = collectJestNames(sourceFile.statements);
 	const shadowed = collectShadowedNames(sourceFile.statements, names);
+	const jestNames = filterShadowed(names, shadowed);
+	const { exempt, replacements } = collectSpecifierArrays({
+		checker: options.checker,
+		factory: context.factory,
+		names: jestNames,
+		resolver: options.resolver,
+		sourceFile,
+	});
 
 	return {
 		...options,
+		exempt,
 		factory: context.factory,
-		names: filterShadowed(names, shadowed),
+		names: jestNames,
+		replacements,
 		sourceFile,
 	};
 }
@@ -112,6 +120,11 @@ function createModulePathVisitor(
 	function visitor(node: ts.Node): ts.Node {
 		const visited = ts.visitEachChild(node, visitor, context);
 
+		const replacement = ctx.replacements.get(visited);
+		if (replacement !== undefined) {
+			return replacement;
+		}
+
 		if (ts.isCallExpression(visited) && isModulePathCall(visited, ctx.names)) {
 			return visitModulePathCall(visited, ctx);
 		}
@@ -132,20 +145,6 @@ function isModulePathCall(node: ts.CallExpression, names: JestNames): boolean {
 	return (
 		ts.isPropertyAccessExpression(node.expression) &&
 		MODULE_PATH_METHODS.has(node.expression.name.text) &&
-		isModulePathCallee(node.expression.expression, names)
-	);
-}
-
-function isModulePathCallee(node: ts.Expression, names: JestNames): boolean {
-	if (isJestCallee(node, names)) {
-		return true;
-	}
-
-	// Chained imperative calls: jest.doMock("./a", fa).doMock("./b", fb)
-	return (
-		ts.isCallExpression(node) &&
-		ts.isPropertyAccessExpression(node.expression) &&
-		CHAINABLE_MODULE_PATH_METHODS.has(node.expression.name.text) &&
 		isModulePathCallee(node.expression.expression, names)
 	);
 }

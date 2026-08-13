@@ -75,12 +75,29 @@ jest.doMock(MODULE_PATH, () => ({}));
 		expect(transformWithRealProgram(source)).toMatch(/jest\.doMock\(script\.Parent\.foo,/);
 	});
 
-	it("should throw on a module specifier read from a loop variable", () => {
+	it("should resolve the elements of a const array iterated into jest.doMock", () => {
+		expect.assertions(2);
+
+		const source = `
+import { jest } from "@rbxts/jest-globals";
+const RESET_MODULE_EXCEPTIONS = ["./a", "./b"];
+for (const moduleName of RESET_MODULE_EXCEPTIONS) {
+	jest.doMock(moduleName, () => jest.requireActual(moduleName));
+}
+`;
+
+		const output = transformWithRealProgram(source);
+
+		expect(output).toMatch(/of \[script\.Parent\.a, script\.Parent\.b\]/);
+		expect(output).toMatch(/const RESET_MODULE_EXCEPTIONS = \["\.\/a", "\.\/b"]/);
+	});
+
+	it("should throw on a module specifier read from a loop over a runtime array", () => {
 		expect.assertions(1);
 
 		const source = `
 import { jest } from "@rbxts/jest-globals";
-const RESET_MODULE_EXCEPTIONS = ["@rbxts/react"];
+declare const RESET_MODULE_EXCEPTIONS: Array<string>;
 for (const moduleName of RESET_MODULE_EXCEPTIONS) {
 	jest.doMock(moduleName, () => ({}));
 }
@@ -89,6 +106,21 @@ for (const moduleName of RESET_MODULE_EXCEPTIONS) {
 		expect(() => transformWithRealProgram(source)).toThrowError(
 			/\[rbxts-jest-transformer] \/src\/test\.ts:5 — `jest\.doMock\(\)` requires a module specifier that can be resolved at compile time/,
 		);
+	});
+
+	it("should throw when the loop variable has a use that is not a specifier", () => {
+		expect.assertions(1);
+
+		const source = `
+import { jest } from "@rbxts/jest-globals";
+const RESET_MODULE_EXCEPTIONS = ["./a"];
+for (const moduleName of RESET_MODULE_EXCEPTIONS) {
+	print(moduleName);
+	jest.doMock(moduleName, () => ({}));
+}
+`;
+
+		expect(() => transformWithRealProgram(source)).toThrowError(/Cannot resolve: moduleName/);
 	});
 
 	it("should throw on a module specifier read from a let binding", () => {

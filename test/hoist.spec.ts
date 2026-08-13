@@ -169,8 +169,8 @@ describe("integration: hoist-jest through roblox-ts pipeline", () => {
 
 		const source = `
 			import { jest } from "@rbxts/jest-globals";
-			const RESET_MODULE_EXCEPTIONS = ["@rbxts/jest"];
-			for (const moduleName of RESET_MODULE_EXCEPTIONS) {
+			let resetModuleExceptions = ["@rbxts/jest"];
+			for (const moduleName of resetModuleExceptions) {
 				jest.doMock(moduleName, () => jest.requireActual(moduleName));
 			}
 		`;
