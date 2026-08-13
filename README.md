@@ -88,6 +88,11 @@ This compiles to the equivalent of:
 jest.mock(game:GetService("ReplicatedStorage"):FindFirstChild("rbxts_include"):FindFirstChild("node_modules"):FindFirstChild("@rbxts"):FindFirstChild("services"), function() ... end)
 ```
 
+Resolution follows the package entry point, so the mock is keyed by the same
+`ModuleScript` the emitted `TS.import` requires — packages whose entry point is
+not `init` (for example `@rbxts/jecs`, whose `main` is `src/jecs.luau`) resolve
+to that file rather than to the folder that holds it.
+
 > **Note:** This string-specifier support applies to every method whose first
 > argument the transformer resolves: `jest.mock()`, `jest.unmock()`,
 > `jest.doMock()`, `jest.dontMock()`, and `jest.requireActual()`. If your
