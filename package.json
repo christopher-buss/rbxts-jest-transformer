@@ -1,6 +1,6 @@
 {
 	"name": "rbxts-transformer-jest",
-	"version": "0.0.8",
+	"version": "0.0.9",
 	"description": "A Jest transformer for Roblox TypeScript (rbxts) projects.",
 	"keywords": ["jest", "roblox", "rbxts", "testing", "transformer"],
 	"repository": {
