@@ -2,8 +2,13 @@ import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 import type { PackageResolver } from "./resolve-package-path.js";
-import { transformCode } from "./test-helpers/transform.js";
+import { getMockChecker, transformCode } from "./test-helpers/transform.js";
+import type { MockArgumentContext } from "./transform-mock-args.js";
 import { transformMockArguments } from "./transform-mock-args.js";
+
+function makeContext(sourceFile: ts.SourceFile, resolver?: PackageResolver): MockArgumentContext {
+	return { checker: getMockChecker(), factory: ts.factory, resolver, sourceFile };
+}
 
 describe(transformMockArguments, () => {
 	it("should transform relative string in jest.mock to instance expression", () => {
@@ -145,7 +150,7 @@ jest.mock("../foo");
 
 		const source = ts.createSourceFile("test.ts", "const x = 1;", ts.ScriptTarget.ESNext, true);
 		const statement = source.statements[0]!;
-		const result = transformMockArguments(ts.factory, [statement]);
+		const result = transformMockArguments([statement], makeContext(source));
 
 		expect(result[0]).toBe(statement);
 	});
@@ -155,7 +160,7 @@ jest.mock("../foo");
 
 		const source = ts.createSourceFile("test.ts", "foo();", ts.ScriptTarget.ESNext, true);
 		const statement = source.statements[0]!;
-		const result = transformMockArguments(ts.factory, [statement]);
+		const result = transformMockArguments([statement], makeContext(source));
 
 		expect(result[0]).toBe(statement);
 	});
@@ -180,10 +185,8 @@ jest.mock("../foo");
 			true,
 		);
 		const result = transformMockArguments(
-			ts.factory,
 			[...source.statements],
-			resolver,
-			"/src/test.ts",
+			makeContext(source, resolver),
 		);
 
 		// eslint-disable-next-line unicorn/no-keyword-prefix -- TS API property name
@@ -204,7 +207,7 @@ jest.mock("../foo");
 			ts.ScriptTarget.ESNext,
 			true,
 		);
-		const result = transformMockArguments(ts.factory, [...source.statements]);
+		const result = transformMockArguments([...source.statements], makeContext(source));
 
 		expect(result[0]).toBe(source.statements[0]);
 	});
@@ -352,10 +355,8 @@ jest.requireActual("@rbxts/some-package");
 			true,
 		);
 		const result = transformMockArguments(
-			ts.factory,
 			[...source.statements],
-			resolver,
-			"/src/test.ts",
+			makeContext(source, resolver),
 		);
 
 		// eslint-disable-next-line unicorn/no-keyword-prefix -- TS API property name

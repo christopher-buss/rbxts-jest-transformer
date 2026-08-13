@@ -3,6 +3,19 @@ import { describe, expect, it } from "vitest";
 import { tryLoadDependencies } from "../src/resolve-package-path.js";
 import { compile } from "./compile.js";
 
+// `@rbxts/jest` types only accept `ModuleScript`, so a source that passes a
+// string specifier needs the documented augmentation to typecheck.
+const JEST_STRING_PATCH = `
+	import "@rbxts/jest-globals";
+	declare module "@rbxts/jest-globals" {
+		namespace jest {
+			function mock<T = unknown>(moduleScript: string, factory?: () => T): typeof jest;
+			function doMock<T = unknown>(moduleScript: string, factory?: () => T): typeof jest;
+			function requireActual<TModule extends {} = unknown>(moduleScript: string): TModule;
+		}
+	}
+`;
+
 describe(tryLoadDependencies, () => {
 	it("should load rojo-resolver and path-translator when available", () => {
 		expect.assertions(2);
@@ -136,16 +149,6 @@ describe("integration: hoist-jest through roblox-ts pipeline", () => {
 	it("should transform jest.requireActual inside jest.mock factory", () => {
 		expect.assertions(1);
 
-		const jestStringPatch = `
-			import "@rbxts/jest-globals";
-			declare module "@rbxts/jest-globals" {
-				namespace jest {
-					function mock<T = unknown>(moduleScript: string, factory?: () => T): typeof jest;
-					function requireActual<TModule extends {} = unknown>(moduleScript: string): TModule;
-				}
-			}
-		`;
-
 		const source = `
 			import { jest } from "@rbxts/jest-globals";
 			jest.mock("@rbxts/jest", () => {
@@ -155,10 +158,38 @@ describe("integration: hoist-jest through roblox-ts pipeline", () => {
 		`;
 
 		const luau = compile(source, {
-			"/src/jest-string-patch.d.ts": jestStringPatch,
+			"/src/jest-string-patch.d.ts": JEST_STRING_PATCH,
 		});
 
 		expect(luau).toMatchSnapshot();
+	});
+
+	it("should throw on a module specifier that only exists at runtime", () => {
+		expect.assertions(1);
+
+		const source = `
+			import { jest } from "@rbxts/jest-globals";
+			const RESET_MODULE_EXCEPTIONS = ["@rbxts/jest"];
+			for (const moduleName of RESET_MODULE_EXCEPTIONS) {
+				jest.doMock(moduleName, () => jest.requireActual(moduleName));
+			}
+		`;
+
+		expect(() =>
+			compile(source, { "/src/jest-string-patch.d.ts": JEST_STRING_PATCH }),
+		).toThrowError(/requires a module specifier that can be resolved at compile time/);
+	});
+
+	it("should not throw on a ModuleScript specifier held in a variable", () => {
+		expect.assertions(1);
+
+		const source = `
+			import { jest } from "@rbxts/jest-globals";
+			const target = script.Parent!.FindFirstChild("foo") as ModuleScript;
+			jest.doMock(target, () => ({}));
+		`;
+
+		expect(() => compile(source)).not.toThrowError();
 	});
 
 	it("should hoist React import above jest.mock when factory contains JSX", () => {

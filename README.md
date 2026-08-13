@@ -97,6 +97,32 @@ jest.mock(game:GetService("ReplicatedStorage"):FindFirstChild("rbxts_include"):F
 > `declare module "@rbxts/jest-globals" { namespace jest { function doMock<T = unknown>(moduleScript: string, factory?: () => T): typeof jest; } }`
 > — or `pnpm typecheck` will reject the string argument.
 
+### The specifier must be known at compile time
+
+A specifier is rewritten to an instance path while compiling, so its value has
+to be statically known. A string literal works, and so does a `const` bound to
+one:
+
+```ts
+const MODULE_PATH = "./my-service";
+jest.mock(MODULE_PATH); // → jest.mock(script.Parent["my-service"])
+```
+
+A specifier that only has a value at runtime cannot be rewritten, and the
+transformer reports a compile error instead of letting a raw string reach jest:
+
+```ts
+const RESET_MODULE_EXCEPTIONS = ["@rbxts/react"];
+for (const moduleName of RESET_MODULE_EXCEPTIONS) {
+	// [rbxts-jest-transformer] setup.ts:4 — `jest.doMock()` requires a module
+	// specifier that can be resolved at compile time.
+	jest.doMock(moduleName, () => jest.requireActual(moduleName));
+}
+```
+
+Write the calls out with literal specifiers, or pass a `ModuleScript` — an
+argument that is not a string is left untouched.
+
 ## Per-test Mocking (`doMock` / `dontMock`)
 
 `jest.mock()` / `jest.unmock()` are hoisted to file scope, so they apply to the

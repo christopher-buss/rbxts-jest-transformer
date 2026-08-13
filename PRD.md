@@ -104,6 +104,12 @@ through the full roblox-ts VirtualProject pipeline (TS → Lua).
     hoisting or factory-validating them. Enables per-test/per-describe module
     mocking via `jest.doMock(...)` (factories may reference imported helpers
     since they are never validated). Chained `doMock`/`dontMock` supported.
+14. **[REQ-014]** ✅: Static module-specifier check — a specifier that is not a
+    string literal is typed with the `TypeChecker`. A string literal type (a
+    `const` bound to a literal, for example) resolves like a literal; a
+    specifier that is a string only at runtime (loop variable, `let` binding,
+    array element) throws a compile error naming the call, the file, and the
+    line. A non-string specifier (a `ModuleScript`) is left untouched.
 
 ---
 
