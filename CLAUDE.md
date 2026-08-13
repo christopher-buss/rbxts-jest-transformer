@@ -38,11 +38,20 @@ Run a single test by name: `pnpm test -- -t "should hoist jest.mock"`
 
 **`src/test-helpers/transform.ts`** — `transformCode(input)` helper that runs
 `ts.createSourceFile` → `ts.transform` → `ts.createPrinter` with a mock
-`ts.Program` (stubbed `TypeChecker.resolveName`). No roblox-ts dependency —
-tests are pure TypeScript AST.
+`ts.Program` (stubbed `TypeChecker.resolveName` and `getTypeAtLocation`). No
+roblox-ts dependency — tests are pure TypeScript AST.
 
 **`src/*.spec.ts`** — Snapshot-based unit tests. Update snapshots with
 `pnpm test -- -u`.
+
+**`test/module-specifier.spec.ts`** — Runs the transformer over a real
+`ts.Program`, for behaviour that depends on the type checker (the mock checker
+cannot prove it).
+
+**`test/compile.ts`** — The patched `VirtualProject` prints the transformed
+source and typechecks it again, which real roblox-ts does not do. Output that
+does not typecheck on its own (`script.Parent.foo`, for example) fails there, so
+assert resolved instance paths in `test/module-specifier.spec.ts` instead.
 
 ## Key Constraints
 
@@ -71,6 +80,7 @@ See `PRD.md` for full spec. Key REQs: REQ-001 (basic hoisting), REQ-002
 (jest-globals first), REQ-003 (import tracking), REQ-004 (shadowing), REQ-005
 (factory validation), REQ-006 (mock-prefix vars), REQ-007 (block scope), REQ-008
 (chained calls), REQ-009 (pure constant hoisting), REQ-010 (type-checker global
+resolution), REQ-014 (static module-specifier check), REQ-015 (specifier array
 resolution).
 
 ## Core Philosophy

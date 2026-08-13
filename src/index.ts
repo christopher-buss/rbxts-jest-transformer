@@ -2,34 +2,34 @@ import ts from "typescript";
 
 import { collectJestNames } from "./collect-jest-names.js";
 import type { IdentifierPredicate, JestNames } from "./constants.js";
-import {
-	ALLOWED_IDENTIFIERS,
-	CHAINABLE_MODULE_PATH_METHODS,
-	MODULE_PATH_METHODS,
-} from "./constants.js";
-import { isJestCallee, partitionBlock, partitionStatements } from "./partition.js";
+import { ALLOWED_IDENTIFIERS, MODULE_PATH_METHODS } from "./constants.js";
+import { isModulePathCallee, partitionBlock, partitionStatements } from "./partition.js";
 import type { PackageResolver } from "./resolve-package-path.js";
 import { createPackageResolver } from "./resolve-package-path.js";
 import { collectShadowedNames, filterShadowed } from "./shadowing.js";
+import { collectSpecifierArrays } from "./specifier-arrays.js";
+import type { MockArgumentContext } from "./transform-mock-args.js";
 import { transformFirstArgument, transformMockArguments } from "./transform-mock-args.js";
 
-interface TransformContext extends TransformerOptions {
-	readonly factory: ts.NodeFactory;
+interface TransformContext extends MockArgumentContext, TransformerOptions {
 	readonly names: JestNames;
-	readonly sourceFile: ts.SourceFile;
+	readonly replacements: ReadonlyMap<ts.Node, ts.Expression>;
 }
 
 interface TransformerOptions {
+	readonly checker: ts.TypeChecker;
 	readonly isAllowed: IdentifierPredicate;
 	readonly jsxFactoryIdentifier: string | undefined;
-	readonly packageResolver: PackageResolver | undefined;
+	readonly resolver: PackageResolver | undefined;
 }
 
 export default function transformer(program: ts.Program): ts.TransformerFactory<ts.SourceFile> {
+	const checker = program.getTypeChecker();
 	const options: TransformerOptions = {
-		isAllowed: createGlobalCheck(program.getTypeChecker()),
+		checker,
+		isAllowed: createGlobalCheck(checker),
 		jsxFactoryIdentifier: getJsxFactoryIdentifier(program.getCompilerOptions()),
-		packageResolver: createPackageResolver(program),
+		resolver: createPackageResolver(program),
 	};
 
 	return (context) => {
@@ -53,11 +53,21 @@ function buildContext(
 ): TransformContext {
 	const names = collectJestNames(sourceFile.statements);
 	const shadowed = collectShadowedNames(sourceFile.statements, names);
+	const jestNames = filterShadowed(names, shadowed);
+	const { exempt, replacements } = collectSpecifierArrays({
+		checker: options.checker,
+		factory: context.factory,
+		names: jestNames,
+		resolver: options.resolver,
+		sourceFile,
+	});
 
 	return {
 		...options,
+		exempt,
 		factory: context.factory,
-		names: filterShadowed(names, shadowed),
+		names: jestNames,
+		replacements,
 		sourceFile,
 	};
 }
@@ -110,6 +120,11 @@ function createModulePathVisitor(
 	function visitor(node: ts.Node): ts.Node {
 		const visited = ts.visitEachChild(node, visitor, context);
 
+		const replacement = ctx.replacements.get(visited);
+		if (replacement !== undefined) {
+			return replacement;
+		}
+
 		if (ts.isCallExpression(visited) && isModulePathCall(visited, ctx.names)) {
 			return visitModulePathCall(visited, ctx);
 		}
@@ -134,20 +149,6 @@ function isModulePathCall(node: ts.CallExpression, names: JestNames): boolean {
 	);
 }
 
-function isModulePathCallee(node: ts.Expression, names: JestNames): boolean {
-	if (isJestCallee(node, names)) {
-		return true;
-	}
-
-	// Chained imperative calls: jest.doMock("./a", fa).doMock("./b", fb)
-	return (
-		ts.isCallExpression(node) &&
-		ts.isPropertyAccessExpression(node.expression) &&
-		CHAINABLE_MODULE_PATH_METHODS.has(node.expression.name.text) &&
-		isModulePathCallee(node.expression.expression, names)
-	);
-}
-
 function visitBlock(node: ts.Block, ctx: TransformContext): ts.Block {
 	const result = partitionBlock(node.statements, ctx.names, ctx.sourceFile, ctx.isAllowed);
 	if (!result) {
@@ -156,23 +157,13 @@ function visitBlock(node: ts.Block, ctx: TransformContext): ts.Block {
 
 	return ctx.factory.updateBlock(node, [
 		...result.hoistedVariables,
-		...transformMockArguments(
-			ctx.factory,
-			result.hoisted,
-			ctx.packageResolver,
-			ctx.sourceFile.fileName,
-		),
+		...transformMockArguments(result.hoisted, ctx),
 		...result.rest,
 	]);
 }
 
 function visitModulePathCall(node: ts.CallExpression, ctx: TransformContext): ts.CallExpression {
-	const args = transformFirstArgument(
-		ctx.factory,
-		node,
-		ctx.packageResolver,
-		ctx.sourceFile.fileName,
-	);
+	const args = transformFirstArgument(node, ctx);
 	if (args === node.arguments) {
 		return node;
 	}
@@ -192,12 +183,7 @@ function visitSourceFile(node: ts.SourceFile, ctx: TransformContext): ts.SourceF
 		...jestImport,
 		...dependencyImports,
 		...hoistedVariables,
-		...transformMockArguments(
-			ctx.factory,
-			hoisted,
-			ctx.packageResolver,
-			ctx.sourceFile.fileName,
-		),
+		...transformMockArguments(hoisted, ctx),
 		...rest,
 	]);
 }

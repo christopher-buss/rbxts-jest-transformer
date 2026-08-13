@@ -1,37 +1,23 @@
 import ts from "typescript";
 
 import { HOIST_METHODS } from "./constants.js";
-import { resolveRelativeModulePath } from "./resolve-module-path.js";
-import type { PackageResolver } from "./resolve-package-path.js";
-import { resolvePackagePath } from "./resolve-package-path.js";
+import type { SpecifierContext } from "./module-specifier.js";
+import { resolveModuleSpecifier } from "./module-specifier.js";
+import type { SpecifierResolutionContext } from "./resolve-specifier.js";
+import { resolveSpecifierExpression } from "./resolve-specifier.js";
 
-interface InnerChainContext {
-	readonly args: ReadonlyArray<ts.Expression>;
-	readonly containingFile: string | undefined;
-	readonly resolver: PackageResolver | undefined;
-}
+export interface MockArgumentContext extends SpecifierContext, SpecifierResolutionContext {}
 
 export function transformFirstArgument(
-	factory: ts.NodeFactory,
 	node: ts.CallExpression,
-	resolver: PackageResolver | undefined,
-	containingFile: string | undefined,
+	context: MockArgumentContext,
 ): ReadonlyArray<ts.Expression> {
-	const firstArgument = node.arguments[0];
-	if (firstArgument === undefined) {
+	const specifier = resolveModuleSpecifier(node, context);
+	if (specifier === undefined) {
 		return node.arguments;
 	}
 
-	if (!ts.isStringLiteral(firstArgument)) {
-		return node.arguments;
-	}
-
-	const resolved =
-		resolveRelativeModulePath(factory, firstArgument.text) ??
-		(resolver !== undefined && containingFile !== undefined
-			? resolvePackagePath(factory, firstArgument.text, containingFile, resolver)
-			: undefined);
-
+	const resolved = resolveSpecifierExpression(specifier, context);
 	if (resolved === undefined) {
 		return node.arguments;
 	}
@@ -40,24 +26,19 @@ export function transformFirstArgument(
 }
 
 export function transformMockArguments(
-	factory: ts.NodeFactory,
-	statements: Array<ts.Statement>,
-	resolver?: PackageResolver,
-	containingFile?: string,
+	statements: ReadonlyArray<ts.Statement>,
+	context: MockArgumentContext,
 ): Array<ts.Statement> {
-	return statements.map((statement) => {
-		return transformStatement(factory, statement, resolver, containingFile);
-	});
+	return statements.map((statement) => transformStatement(statement, context));
 }
 
 function transformCallChain(
-	factory: ts.NodeFactory,
 	node: ts.CallExpression,
-	resolver: PackageResolver | undefined,
-	containingFile: string | undefined,
+	context: MockArgumentContext,
 ): ts.CallExpression {
-	const args = transformFirstArgument(factory, node, resolver, containingFile);
-	const chained = transformInnerChain(factory, node, { args, containingFile, resolver });
+	const { factory } = context;
+	const args = transformFirstArgument(node, context);
+	const chained = transformInnerChain(node, args, context);
 	if (chained !== undefined) {
 		return chained;
 	}
@@ -70,9 +51,9 @@ function transformCallChain(
 }
 
 function transformInnerChain(
-	factory: ts.NodeFactory,
 	node: ts.CallExpression,
-	context: InnerChainContext,
+	args: ReadonlyArray<ts.Expression>,
+	context: MockArgumentContext,
 ): ts.CallExpression | undefined {
 	if (
 		!ts.isPropertyAccessExpression(node.expression) ||
@@ -82,39 +63,30 @@ function transformInnerChain(
 		return undefined;
 	}
 
-	const inner = transformCallChain(
-		factory,
-		node.expression.expression,
-		context.resolver,
-		context.containingFile,
-	);
-	if (inner === node.expression.expression && context.args === node.arguments) {
+	const inner = transformCallChain(node.expression.expression, context);
+	if (inner === node.expression.expression && args === node.arguments) {
 		return undefined;
 	}
 
+	const { factory } = context;
 	const callee = factory.updatePropertyAccessExpression(
 		node.expression,
 		inner,
 		node.expression.name,
 	);
 
-	return factory.updateCallExpression(node, callee, node.typeArguments, context.args);
+	return factory.updateCallExpression(node, callee, node.typeArguments, args);
 }
 
-function transformStatement(
-	factory: ts.NodeFactory,
-	statement: ts.Statement,
-	resolver: PackageResolver | undefined,
-	containingFile: string | undefined,
-): ts.Statement {
+function transformStatement(statement: ts.Statement, context: MockArgumentContext): ts.Statement {
 	if (!ts.isExpressionStatement(statement) || !ts.isCallExpression(statement.expression)) {
 		return statement;
 	}
 
-	const transformed = transformCallChain(factory, statement.expression, resolver, containingFile);
+	const transformed = transformCallChain(statement.expression, context);
 	if (transformed === statement.expression) {
 		return statement;
 	}
 
-	return factory.updateExpressionStatement(statement, transformed);
+	return context.factory.updateExpressionStatement(statement, transformed);
 }

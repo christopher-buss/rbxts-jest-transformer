@@ -1043,13 +1043,28 @@ jest.mock("./foo", () => ({ value: X }));
 			const input = `
 import { jest } from "@rbxts/jest-globals";
 import { foo } from "./foo";
-const PATH = "./foo";
+const PATH = "unresolved-path";
 jest.mock(PATH);
 `;
 
 			const result = transformCode(input);
 
 			expect(result).toMatch(/const PATH.*\njest\.mock\(PATH\)/);
+		});
+
+		it("should resolve a pure constant module path used as call arg", () => {
+			expect.assertions(1);
+
+			const input = `
+import { jest } from "@rbxts/jest-globals";
+import { foo } from "./foo";
+const PATH = "./foo";
+jest.mock(PATH);
+`;
+
+			const result = transformCode(input);
+
+			expect(result).toMatch(/const PATH.*\njest\.mock\(script\.Parent\.foo\)/);
 		});
 
 		it("should not hoist const with impure init (throws)", () => {
