@@ -160,8 +160,52 @@ describe(createPackageResolver, () => {
 
 	function mockPathTranslator(transform = (filePath: string) => filePath) {
 		return function PathTranslator() {
-			return { getOutputPath: transform };
+			return { getImportPath: transform, getOutputPath: transform };
 		} as unknown as Dependencies["PathTranslator"];
+	}
+
+	/**
+	 * Mirrors `PathTranslator.getImportPath`: TypeScript extensions become Luau
+	 * ones and an `index` entry becomes `init`.
+	 *
+	 * @param filePath - The file path to translate.
+	 * @returns The path of the emitted Luau file.
+	 */
+	function fakeImportPath(filePath: string): string {
+		const luauPath = filePath.replace(/(?:\.d)?\.tsx?$/, ".lua");
+		return luauPath === filePath
+			? filePath
+			: luauPath.replace(/(^|\/)index\.lua$/, "$1init.lua");
+	}
+
+	/**
+	 * Mirrors `RojoResolver.getRbxPathFromFilePath` for the default roblox-ts
+	 * `node_modules` partition: Luau extensions are stripped, an `init` file
+	 * collapses into its folder, and anything else keeps its file name.
+	 *
+	 * @param filePath - The emitted file path to look up.
+	 * @returns The rbx path of the file, or `undefined` outside `node_modules`.
+	 */
+	function fakeNodeModulesRbxPath(filePath: string): ReadonlyArray<string> | undefined {
+		const relative = filePath.replace(/\\/g, "/").split("/node_modules/")[1];
+		if (relative === undefined) {
+			return undefined;
+		}
+
+		const segments = relative.split("/");
+		const fileName = segments.pop()?.replace(/\.luau?$/, "");
+		if (fileName !== undefined && fileName !== "init") {
+			segments.push(fileName);
+		}
+
+		return ["ReplicatedStorage", "rbxts_include", "node_modules", ...segments];
+	}
+
+	function packageJsonReader(packageDirectory: string, json: unknown) {
+		const manifestPath = path.resolve(packageDirectory, "package.json");
+		return (packageJsonPath: string) => {
+			return packageJsonPath === manifestPath ? json : (undefined as unknown);
+		};
 	}
 
 	function mockDeps(
@@ -282,27 +326,23 @@ describe(createPackageResolver, () => {
 		]);
 	});
 
-	it("should strip index file segment from rojo-resolved rbx path", () => {
+	it("should ask rojo about the runtime entry file, not the typings file", () => {
 		expect.assertions(1);
 
 		const program = mockProgram({
 			configFilePath: "/project/tsconfig.json",
 			outDir: "/project/out",
 		});
+		let queriedPath: string | undefined;
 		const deps: Dependencies = {
-			PathTranslator: mockPathTranslator(),
+			PathTranslator: mockPathTranslator(fakeImportPath),
 			RojoResolver: {
 				findRojoConfigFilePath: () => ({ path: "/project/default.project.json" }),
 				fromPath: () => {
 					return {
-						getRbxPathFromFilePath: () => [
-							"ReplicatedStorage",
-							"rbxts_include",
-							"node_modules",
-							"@rbxts",
-							"services",
-							"index.d.ts",
-						],
+						getRbxPathFromFilePath: (filePath: string) => {
+							queriedPath = filePath;
+						},
 					};
 				},
 			},
@@ -310,16 +350,124 @@ describe(createPackageResolver, () => {
 
 		const resolver = createPackageResolver(program, {
 			loadDependencies: () => deps,
-			resolveModule: () => "/project/node_modules/@rbxts/services/index.d.ts",
+			readPackageJson: packageJsonReader("/project/node_modules/@rbxts/jecs", {
+				main: "src/jecs.luau",
+				types: "src/jecs.d.ts",
+			}),
+			resolveModule: () => "/project/node_modules/@rbxts/jecs/src/jecs.d.ts",
 		});
-		const result = resolver?.resolveToRbxPath("@rbxts/services", "/project/src/test.ts");
+		resolver?.resolveToRbxPath("@rbxts/jecs", "/project/src/test.ts");
+
+		expect(queriedPath).toBe(path.resolve("/project/node_modules/@rbxts/jecs/src/jecs.luau"));
+	});
+
+	it("should resolve a package entry to its module file, not the containing folder", () => {
+		expect.assertions(1);
+
+		const program = mockProgram({
+			configFilePath: "/project/tsconfig.json",
+			outDir: "/project/out",
+		});
+		const deps: Dependencies = {
+			PathTranslator: mockPathTranslator(fakeImportPath),
+			RojoResolver: {
+				findRojoConfigFilePath: () => ({ path: "/project/default.project.json" }),
+				fromPath: () => ({ getRbxPathFromFilePath: fakeNodeModulesRbxPath }),
+			},
+		};
+
+		const resolver = createPackageResolver(program, {
+			loadDependencies: () => deps,
+			readPackageJson: packageJsonReader("/project/node_modules/@rbxts/jecs", {
+				main: "src/jecs.luau",
+				types: "src/jecs.d.ts",
+			}),
+			resolveModule: () => "/project/node_modules/@rbxts/jecs/src/jecs.d.ts",
+		});
+		const result = resolver?.resolveToRbxPath("@rbxts/jecs", "/project/src/test.ts");
 
 		expect(result).toStrictEqual([
 			"ReplicatedStorage",
 			"rbxts_include",
 			"node_modules",
 			"@rbxts",
-			"services",
+			"jecs",
+			"src",
+			"jecs",
+		]);
+	});
+
+	it("should resolve a package whose entry is an index file to its folder", () => {
+		expect.assertions(1);
+
+		const program = mockProgram({
+			configFilePath: "/project/tsconfig.json",
+			outDir: "/project/out",
+		});
+		const deps: Dependencies = {
+			PathTranslator: mockPathTranslator(fakeImportPath),
+			RojoResolver: {
+				findRojoConfigFilePath: () => ({ path: "/project/default.project.json" }),
+				fromPath: () => ({ getRbxPathFromFilePath: fakeNodeModulesRbxPath }),
+			},
+		};
+
+		const resolver = createPackageResolver(program, {
+			loadDependencies: () => deps,
+			readPackageJson: packageJsonReader("/project/node_modules/@rbxts/react", {
+				main: "src/init.lua",
+				types: "src/index.d.ts",
+			}),
+			resolveModule: () => "/project/node_modules/@rbxts/react/src/index.d.ts",
+		});
+		const result = resolver?.resolveToRbxPath("@rbxts/react", "/project/src/test.ts");
+
+		expect(result).toStrictEqual([
+			"ReplicatedStorage",
+			"rbxts_include",
+			"node_modules",
+			"@rbxts",
+			"react",
+			"src",
+		]);
+	});
+
+	it("should resolve a deep package import to its module file", () => {
+		expect.assertions(1);
+
+		const program = mockProgram({
+			configFilePath: "/project/tsconfig.json",
+			outDir: "/project/out",
+		});
+		const deps: Dependencies = {
+			PathTranslator: mockPathTranslator(fakeImportPath),
+			RojoResolver: {
+				findRojoConfigFilePath: () => ({ path: "/project/default.project.json" }),
+				fromPath: () => ({ getRbxPathFromFilePath: fakeNodeModulesRbxPath }),
+			},
+		};
+
+		const resolver = createPackageResolver(program, {
+			loadDependencies: () => deps,
+			readPackageJson: packageJsonReader("/project/node_modules/@rbxts/react", {
+				main: "src/init.lua",
+				types: "src/index.d.ts",
+			}),
+			resolveModule: () => "/project/node_modules/@rbxts/react/src/prop-types.d.ts",
+		});
+		const result = resolver?.resolveToRbxPath(
+			"@rbxts/react/src/prop-types",
+			"/project/src/test.ts",
+		);
+
+		expect(result).toStrictEqual([
+			"ReplicatedStorage",
+			"rbxts_include",
+			"node_modules",
+			"@rbxts",
+			"react",
+			"src",
+			"prop-types",
 		]);
 	});
 
@@ -366,7 +514,7 @@ describe(createPackageResolver, () => {
 		let fromPathArgument: string | undefined;
 		const deps: Dependencies = {
 			PathTranslator: function PathTranslator() {
-				return { getOutputPath: (filePath: string) => filePath };
+				return { getImportPath: (filePath: string) => filePath };
 			} as unknown as Dependencies["PathTranslator"],
 			RojoResolver: {
 				findRojoConfigFilePath: () => ({ path: "/project/default.project.json" }),
@@ -415,7 +563,7 @@ describe(createPackageResolver, () => {
 			PathTranslator: function PathTranslator(rootDirectory: string, outDirectory: string) {
 				constructorCalls.push({ outDirectory, rootDirectory });
 				return {
-					getOutputPath: (filePath: string) => {
+					getImportPath: (filePath: string) => {
 						return path
 							.join(outDirectory, path.relative(rootDirectory, filePath))
 							.replace(/\\/g, "/");
@@ -474,7 +622,7 @@ describe(createPackageResolver, () => {
 		const deps: Dependencies = {
 			PathTranslator: function PathTranslator(rootDirectory: string, outDirectory: string) {
 				return {
-					getOutputPath: (filePath: string) => {
+					getImportPath: (filePath: string) => {
 						return path
 							.join(outDirectory, path.relative(rootDirectory, filePath))
 							.replace(/\\/g, "/");
@@ -514,13 +662,13 @@ describe(createPackageResolver, () => {
 			configFilePath: "/project/tsconfig.spec.json",
 			outDir: "/project/out-test",
 		});
-		let translatorCalled = false;
+		let nodeModuleFlag: boolean | undefined;
 		const deps: Dependencies = {
 			PathTranslator: function PathTranslator() {
 				return {
-					getOutputPath: () => {
-						translatorCalled = true;
-						return "/project/out-test/node_modules/@rbxts/services/index.d.ts";
+					getImportPath: (filePath: string, isNodeModule = false) => {
+						nodeModuleFlag = isNodeModule;
+						return filePath;
 					},
 				};
 			} as unknown as Dependencies["PathTranslator"],
@@ -550,7 +698,7 @@ describe(createPackageResolver, () => {
 		});
 		const result = resolver?.resolveToRbxPath("@rbxts/services", "/project/src/test.ts");
 
-		expect(translatorCalled).toBe(false);
+		expect(nodeModuleFlag).toBe(true);
 		expect(result).toStrictEqual([
 			"ReplicatedStorage",
 			"rbxts_include",
@@ -571,7 +719,7 @@ describe(createPackageResolver, () => {
 		const deps: Dependencies = {
 			PathTranslator: function PathTranslator() {
 				return {
-					getOutputPath: (filePath: string) => {
+					getImportPath: (filePath: string) => {
 						translatedFrom = filePath;
 						return "/project/out/shared/foo.luau";
 					},
@@ -601,7 +749,7 @@ describe(createPackageResolver, () => {
 		expect(result).toStrictEqual(["ReplicatedStorage", "shared", "foo"]);
 	});
 
-	it("should strip bare index segment from rojo-resolved rbx path", () => {
+	it("should resolve a project-local declaration file to its Luau module", () => {
 		expect.assertions(1);
 
 		const program = mockProgram({
@@ -609,19 +757,16 @@ describe(createPackageResolver, () => {
 			outDir: "/project/out",
 		});
 		const deps: Dependencies = {
-			PathTranslator: mockPathTranslator(),
+			PathTranslator: mockPathTranslator(fakeImportPath),
 			RojoResolver: {
 				findRojoConfigFilePath: () => ({ path: "/project/default.project.json" }),
 				fromPath: () => {
 					return {
-						getRbxPathFromFilePath: () => [
-							"ReplicatedStorage",
-							"rbxts_include",
-							"node_modules",
-							"@rbxts",
-							"services",
-							"index",
-						],
+						getRbxPathFromFilePath: (filePath: string) => {
+							return filePath === "/project/src/shared/legacy.lua"
+								? ["ReplicatedStorage", "shared", "legacy"]
+								: undefined;
+						},
 					};
 				},
 			},
@@ -629,17 +774,11 @@ describe(createPackageResolver, () => {
 
 		const resolver = createPackageResolver(program, {
 			loadDependencies: () => deps,
-			resolveModule: () => "/project/node_modules/@rbxts/services/index.d.ts",
+			resolveModule: () => "/project/src/shared/legacy.d.ts",
 		});
-		const result = resolver?.resolveToRbxPath("@rbxts/services", "/project/src/test.ts");
+		const result = resolver?.resolveToRbxPath("./legacy", "/project/src/shared/test.ts");
 
-		expect(result).toStrictEqual([
-			"ReplicatedStorage",
-			"rbxts_include",
-			"node_modules",
-			"@rbxts",
-			"services",
-		]);
+		expect(result).toStrictEqual(["ReplicatedStorage", "shared", "legacy"]);
 	});
 });
 

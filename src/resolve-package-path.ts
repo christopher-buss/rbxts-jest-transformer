@@ -1,11 +1,14 @@
 import path from "node:path";
 import ts from "typescript";
 
+import type { PackageJsonReader } from "./package-entry.js";
+import { defaultReadPackageJson, resolvePackageEntryPath } from "./package-entry.js";
 import type { TsConfigReader } from "./tsconfig-reader.js";
 import { defaultReadTsConfig, resolveRojoFromTsConfig } from "./tsconfig-reader.js";
 
 export interface CreateResolverOptions {
 	loadDependencies?: () => Dependencies | undefined;
+	readPackageJson?: PackageJsonReader;
 	readTsConfig?: TsConfigReader;
 	resolveModule?: ModuleResolver;
 }
@@ -38,13 +41,14 @@ type PathTranslatorConstructor = new (
 ) => PathTranslatorLike;
 
 interface PathTranslatorLike {
-	getOutputPath(filePath: string): string;
+	getImportPath(filePath: string, isNodeModule?: boolean): string;
 }
 
 interface ProjectContext {
 	readonly compilerOptions: ts.CompilerOptions;
 	readonly ownerTranslators: ReadonlyArray<OwnerTranslator>;
 	readonly pathTranslator: PathTranslatorLike;
+	readonly readPackageJson: PackageJsonReader;
 	readonly resolveModule: ModuleResolver;
 	readonly rojoResolver: RojoResolverLike;
 }
@@ -67,27 +71,9 @@ export function createPackageResolver(
 		return undefined;
 	}
 
-	const { compilerOptions, ownerTranslators, pathTranslator, resolveModule, rojoResolver } =
-		context;
-
 	return {
 		resolveToRbxPath(specifier: string, containingFile: string) {
-			const resolvedFileName = resolveModule(specifier, containingFile, compilerOptions);
-			if (resolvedFileName === undefined) {
-				return;
-			}
-
-			if (isUnderNodeModules(resolvedFileName)) {
-				const rbxPath = rojoResolver.getRbxPathFromFilePath(resolvedFileName);
-				return stripIndexSegment(rbxPath);
-			}
-
-			const translator =
-				pickOwnerTranslator(ownerTranslators, resolvedFileName) ?? pathTranslator;
-			const rbxPath = rojoResolver.getRbxPathFromFilePath(
-				translator.getOutputPath(resolvedFileName),
-			);
-			return stripIndexSegment(rbxPath);
+			return resolveToRbxPath(context, specifier, containingFile);
 		},
 	};
 }
@@ -196,17 +182,20 @@ const NODE_MODULES_RE = /[\\/]node_modules[\\/]/;
 interface BuildContextInput {
 	readonly deps: Dependencies;
 	readonly outDirectory: string;
+	readonly readPackageJson: PackageJsonReader;
 	readonly resolveModule: ModuleResolver;
 	readonly rojoConfigPath: string;
 	readonly rootDirectory: string;
 }
 
 function buildContext(program: ts.Program, input: BuildContextInput): ProjectContext {
-	const { deps, outDirectory, resolveModule, rojoConfigPath, rootDirectory } = input;
+	const { deps, outDirectory, readPackageJson, resolveModule, rojoConfigPath, rootDirectory } =
+		input;
 	return {
 		compilerOptions: program.getCompilerOptions(),
 		ownerTranslators: collectOwnerTranslators(program, deps.PathTranslator),
 		pathTranslator: new deps.PathTranslator(rootDirectory, outDirectory, undefined, false),
+		readPackageJson,
 		resolveModule,
 		rojoResolver: deps.RojoResolver.fromPath(rojoConfigPath),
 	};
@@ -293,6 +282,7 @@ function resolveProjectContext(
 	return buildContext(program, {
 		deps,
 		outDirectory: outDir,
+		readPackageJson: options.readPackageJson ?? defaultReadPackageJson,
 		resolveModule: options.resolveModule ?? defaultResolveModule,
 		rojoConfigPath,
 		rootDirectory: rootDir ?? projectDirectory,
@@ -311,17 +301,42 @@ function resolveRojoConfigPath(
 	);
 }
 
-function stripIndexSegment(
-	rbxPath: ReadonlyArray<string> | undefined,
+/**
+ * Mirrors roblox-ts's `createImportExpression` so that a mock is keyed by the
+ * same instance the emitted `TS.import` requires.
+ *
+ * @param context - The resolved project context.
+ * @param specifier - The module specifier to resolve.
+ * @param containingFile - The file the specifier was written in.
+ * @returns The rbx path of the target module, or `undefined` when it cannot be
+ *   resolved.
+ */
+function resolveToRbxPath(
+	context: ProjectContext,
+	specifier: string,
+	containingFile: string,
 ): ReadonlyArray<string> | undefined {
-	if (rbxPath === undefined || rbxPath.length === 0) {
-		return rbxPath;
+	const {
+		compilerOptions,
+		ownerTranslators,
+		pathTranslator,
+		readPackageJson,
+		resolveModule,
+		rojoResolver,
+	} = context;
+	const resolvedFileName = resolveModule(specifier, containingFile, compilerOptions);
+	if (resolvedFileName === undefined) {
+		return undefined;
 	}
 
-	const last = rbxPath.at(-1);
-	if (last === "index" || last?.includes(".") === true) {
-		return rbxPath.slice(0, -1);
+	if (isUnderNodeModules(resolvedFileName)) {
+		const entryFileName =
+			resolvePackageEntryPath(resolvedFileName, readPackageJson) ?? resolvedFileName;
+		return rojoResolver.getRbxPathFromFilePath(
+			pathTranslator.getImportPath(entryFileName, true),
+		);
 	}
 
-	return rbxPath;
+	const translator = pickOwnerTranslator(ownerTranslators, resolvedFileName) ?? pathTranslator;
+	return rojoResolver.getRbxPathFromFilePath(translator.getImportPath(resolvedFileName));
 }
